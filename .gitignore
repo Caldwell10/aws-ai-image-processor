@@ -1,1 +1,34 @@
 aws-env
+# macOS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+aws-env/
+*.env
+.env*
+*.log
+
+# Node / Vite (dashboard)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env
+dashboard/.env.*
+dashboard/npm-debug.log*
+
+# AWS / builds
+.aws/
+*.zip
+serverless/.serverless/
+*.coverage
+*.pem
+
+# misc
+.qodo/
