@@ -35,63 +35,70 @@ function App() {
     }
   };
 
-  // helper: de-dup by filename within a 2-minute window (keep newest)
-  function dedupeRecentByFilename(items) {
-    const byName = new Map();
-    for (const item of items) {
-      const name = (item.filename || '').trim();
-      const ts = new Date(item.upload_time || item.timestamp || 0).getTime();
-      if (!name) continue;
+  // ---------- DEDUPE (one card per file, prefer completed > processing > uploaded, newest wins)
+  const STATUS_RANK = { completed: 3, processing: 2, uploaded: 1 };
 
-      if (!byName.has(name)) {
-        byName.set(name, item);
-      } else {
-        const prev = byName.get(name);
-        const prevTs = new Date(prev.upload_time || prev.timestamp || 0).getTime();
-        const within2m = Math.abs(ts - prevTs) <= 120 * 1000;
-        if (ts > prevTs && within2m) {
-          byName.set(name, item);
-        } else if (!within2m) {
-          // treat as distinct batch; keep both by faking a unique key
-          byName.set(`${name}:${ts}`, item);
-        }
-      }
+  function normalizeName(name = '') {
+    const lower = name.toLowerCase().trim();
+    const m = lower.match(/([^/_]+?\.(?:jpg|jpeg|png|webp))$/i);
+    return m ? m[1] : lower;
+  }
+
+  function bestOf(a, b) {
+    const sa = (a.processing_status || '').toLowerCase();
+    const sb = (b.processing_status || '').toLowerCase();
+    const ra = STATUS_RANK[sa] || 0;
+    const rb = STATUS_RANK[sb] || 0;
+    if (ra !== rb) return ra > rb ? a : b;
+
+    const ta = new Date(a.upload_time || a.timestamp || 0).getTime();
+    const tb = new Date(b.upload_time || b.timestamp || 0).getTime();
+    return ta >= tb ? a : b;
+  }
+
+  function dedupeByFilename(items = []) {
+    const map = new Map();
+    for (const it of items) {
+      const key = normalizeName(it.filename || it.id || '');
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, it);
+      else map.set(key, bestOf(map.get(key), it));
     }
-    // flatten and sort desc by time
-    const arr = Array.from(byName.values());
-    arr.sort((a, b) => new Date(b.upload_time || b.timestamp || 0) - new Date(a.upload_time || a.timestamp || 0));
-    return arr;
+    return Array.from(map.values()).sort(
+      (a, b) =>
+        new Date(b.upload_time || b.timestamp || 0) -
+        new Date(a.upload_time || a.timestamp || 0)
+    );
   }
 
   const fetchImages = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/images`);
       const data = await response.json();
-      const raw = data.images || [];
-      // sort desc
-      raw.sort((a, b) => new Date(b.upload_time || b.timestamp || 0) - new Date(a.upload_time || a.timestamp || 0));
-      // de-dup recent
-      const cleaned = dedupeRecentByFilename(raw);
+      const raw = (data.images || []).sort(
+        (a, b) =>
+          new Date(b.upload_time || b.timestamp || 0) -
+          new Date(a.upload_time || a.timestamp || 0)
+      );
+      const cleaned = dedupeByFilename(raw);
       setImages(cleaned);
     } catch (error) {
       console.error('Error fetching images:', error);
     }
   };
+  // ---------- end dedupe
 
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true);
+    else if (e.type === "dragleave") setDragActive(false);
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (uploading) return; // prevent double submit via drop
+    if (uploading) return;
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       handleFileUpload({ target: { files: e.dataTransfer.files } });
@@ -99,7 +106,7 @@ function App() {
   };
 
   const handleFileUpload = async (event) => {
-    if (uploading) return; // prevent double submit via click
+    if (uploading) return;
     const inputEl = event.target;
     const file = inputEl.files[0];
     if (!file) return;
@@ -109,7 +116,6 @@ function App() {
       setUploadResult({ success: false, error: 'Please upload a valid image file (JPG, PNG, WebP)' });
       return;
     }
-
     if (file.size > 10 * 1024 * 1024) {
       setUploadResult({ success: false, error: 'File too large. Maximum size is 10MB.' });
       return;
@@ -130,20 +136,20 @@ function App() {
         });
 
         const result = await uploadResponse.json();
-        
+
         if (uploadResponse.ok) {
           setUploadResult({ success: true, ...result });
           setTimeout(() => { fetchData(); }, 2000);
         } else {
           setUploadResult({ success: false, error: result.error });
         }
-        
+
         setUploading(false);
         try { inputEl.value = ''; } catch {}
       };
 
       reader.readAsDataURL(file);
-      
+
     } catch (error) {
       console.error('Upload error:', error);
       setUploadResult({ success: false, error: error.message });
@@ -151,15 +157,8 @@ function App() {
     }
   };
 
-  const openModal = (img) => {
-    setSelected(img);
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    setSelected(null);
-  };
+  const openModal = (img) => { setSelected(img); setShowModal(true); };
+  const closeModal = () => { setShowModal(false); setSelected(null); };
 
   const StatCard = ({ icon: Icon, title, value, color, subtitle }) => (
     <div style={{
@@ -207,34 +206,44 @@ function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
       <style>{`
-          @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
-          @keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .5;} }
+        @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+        @keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .5;} }
         .lineClamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-          /* NEW: responsive helpers */
-          .container { max-width: 1280px; margin: 0 auto; padding: 32px 24px; }
-          .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 32px; }
-          .recentGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+        /* responsive helpers used across the page */
+        .container { max-width: 1280px; margin: 0 auto; padding: 32px 24px; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 32px; }
+        .recentGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 
-          .objRow { display:flex; align-items:center; justify-content:space-between; padding:16px; background:#f9fafb; border-radius:8px; }
-          .objLeft { display:flex; align-items:center; gap:16px; }
-          .objBarWrap { display:flex; align-items:center; gap:8px; }
-          .objBarTrack { width:96px; background:#e5e7eb; border-radius:4px; height:8px; }
-          .objPct { font-size:14px; font-weight:600; color:#2563eb; min-width:48px; text-align:right; }
+        .objRow { display:flex; align-items:center; justify-content:space-between; padding:16px; background:#f9fafb; border-radius:8px; }
+        .objLeft { display:flex; align-items:center; gap:16px; }
+        .objBarWrap { display:flex; align-items:center; gap:8px; }
+        .objBarTrack { width:96px; background:#e5e7eb; border-radius:4px; height:8px; }
+        .objPct { font-size:14px; font-weight:600; color:#2563eb; min-width:48px; text-align:right; }
 
-          @media (max-width: 640px) {
-            .container { padding: 20px 16px; }
-            .cards { grid-template-columns: 1fr; }
-            .recentGrid { grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
-            .objRow { flex-direction: column; align-items:flex-start; gap:10px; }
-            .objBarTrack { width: 100%; }
-            .objPct { min-width:auto; text-align:left; }
-      }
-    `}</style>
+        /* modal grid stacks on smaller screens */
+        .modalGrid { display:grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
+        @media (max-width: 900px) {
+          .modalGrid { grid-template-columns: 1fr !important; }
+        }
+
+        /* small screens */
+        @media (max-width: 640px) {
+          .container { padding: 20px 16px; }
+          .cards { grid-template-columns: 1fr; }
+          .recentGrid { grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+          .objRow { flex-direction: column; align-items:flex-start; gap:10px; }
+          .objBarTrack { width: 100%; }
+          .objPct { min-width:auto; text-align:left; }
+        }
+        @media (max-width: 420px) {
+          h1 { font-size: 20px !important; }
+        }
+      `}</style>
 
       {/* Header */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb' }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
+        <div className="container" style={{ paddingTop: 0, paddingBottom: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ padding: '8px', backgroundColor: '#2563eb', borderRadius: '8px' }}>
@@ -262,15 +271,14 @@ function App() {
         </div>
       </header>
 
-      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '32px 24px' }}>
-        
+      <div className="container">
         {/* Upload Section */}
         <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '32px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
             <Upload size={24} color="#2563eb" />
             <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#111827', margin: 0 }}>Upload Image for Processing</h2>
           </div>
-          
+
           <div
             style={{
               position: 'relative',
@@ -335,7 +343,7 @@ function App() {
         </div>
 
         {/* Analytics */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+        <div className="cards">
           <StatCard icon={BarChart3} title="Total Images Processed" value={analytics?.processing_stats?.total_processed || 0} subtitle="All time" color="#2563eb" />
           <StatCard icon={CheckCircle} title="Success Rate" value={`${analytics?.processing_stats?.success_rate || 0}%`} subtitle="Processing accuracy" color="#059669" />
           <StatCard icon={Eye} title="Objects Detected" value={analytics?.object_detection?.total_objects_detected || 0} subtitle="Across all images" color="#7c3aed" />
@@ -350,30 +358,26 @@ function App() {
             </div>
             <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#111827', margin: 0 }}>Top Detected Objects</h2>
           </div>
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {analytics?.object_detection?.top_objects?.slice(0, 8).map((obj, index) => (
               <div key={index}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', backgroundColor: '#f9fafb', borderRadius: '8px' }}
+                className="objRow"
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div className="objLeft">
                   <div style={{ width: '32px', height: '32px', backgroundColor: '#dbeafe', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <span style={{ fontSize: '14px', fontWeight: '600', color: '#2563eb' }}>#{index + 1}</span>
                   </div>
                   <span style={{ fontWeight: '500', color: '#111827', textTransform: 'capitalize' }}>{obj.name}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div className="objBarWrap">
                   <span style={{ fontSize: '14px', color: '#6b7280' }}>{obj.count} detections</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ width: '96px', backgroundColor: '#e5e7eb', borderRadius: '4px', height: '8px' }}>
-                      <div style={{ backgroundColor: '#2563eb', height: '8px', borderRadius: '4px', width: `${obj.percentage}%`, transition: 'width 0.5s ease-out' }} />
-                    </div>
-                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#2563eb', minWidth: '48px', textAlign: 'right' }}>
-                      {obj.percentage}%
-                    </span>
+                  <div className="objBarTrack">
+                    <div style={{ backgroundColor: '#2563eb', height: '8px', borderRadius: '4px', width: `${obj.percentage}%`, transition: 'width 0.5s ease-out' }} />
                   </div>
+                  <span className="objPct">{obj.percentage}%</span>
                 </div>
               </div>
             ))}
@@ -391,11 +395,11 @@ function App() {
         {/* Recent Activity */}
         <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#111827', marginBottom: '24px' }}>Recent Processing Activity</h2>
-          
+
           {images.length > 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
+            <div className="recentGrid">
               {images.slice(0, 12).map((image, index) => {
-                const thumb = image.thumbnail_url || image.image_url; // show the picture
+                const thumb = image.thumbnail_url || image.image_url;
                 return (
                   <div
                     key={`${image.id || image.filename || index}`}
@@ -442,7 +446,7 @@ function App() {
 
       {/* Footer */}
       <footer style={{ backgroundColor: '#111827', color: 'white', marginTop: '64px' }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '24px' }}>
+        <div className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ padding: '6px', backgroundColor: '#2563eb', borderRadius: '6px' }}>
@@ -475,7 +479,7 @@ function App() {
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 0 }}>
+            <div className="modalGrid">
               <div style={{ minHeight: 360, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {selected?.image_url || selected?.thumbnail_url ? (
                   <img
@@ -535,3 +539,4 @@ function App() {
 }
 
 export default App;
+
