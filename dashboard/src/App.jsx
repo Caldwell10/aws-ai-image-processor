@@ -207,10 +207,30 @@ function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
       <style>{`
-        @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
-        @keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .5;} }
+          @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+          @keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .5;} }
         .lineClamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-      `}</style>
+
+          /* NEW: responsive helpers */
+          .container { max-width: 1280px; margin: 0 auto; padding: 32px 24px; }
+          .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 32px; }
+          .recentGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+
+          .objRow { display:flex; align-items:center; justify-content:space-between; padding:16px; background:#f9fafb; border-radius:8px; }
+          .objLeft { display:flex; align-items:center; gap:16px; }
+          .objBarWrap { display:flex; align-items:center; gap:8px; }
+          .objBarTrack { width:96px; background:#e5e7eb; border-radius:4px; height:8px; }
+          .objPct { font-size:14px; font-weight:600; color:#2563eb; min-width:48px; text-align:right; }
+
+          @media (max-width: 640px) {
+            .container { padding: 20px 16px; }
+            .cards { grid-template-columns: 1fr; }
+            .recentGrid { grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+            .objRow { flex-direction: column; align-items:flex-start; gap:10px; }
+            .objBarTrack { width: 100%; }
+            .objPct { min-width:auto; text-align:left; }
+      }
+    `}</style>
 
       {/* Header */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb' }}>
