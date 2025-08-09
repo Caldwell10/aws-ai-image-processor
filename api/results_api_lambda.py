@@ -61,7 +61,12 @@ def lambda_handler(event, context):
         })
 
 def get_single_image(image_id):
-    """Get detailed analysis for a specific image"""
+    """Get detailed analysis for a specific image
+    Args:
+        image_id (str): The unique ID of the image to retrieve.
+    Returns:
+        dict: Image details and analysis results.
+    """
     try:
         response = table.get_item(Key={'image_id': image_id})
         
